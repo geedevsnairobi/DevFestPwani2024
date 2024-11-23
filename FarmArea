@@ -1,0 +1,141 @@
+// UI 
+var colors = {'cyan': '#24C1E0', 'transparent': '#11ffee00', 'gray': '#F8F9FA'};
+
+var THUMBNAIL_WIDTH = 128;
+
+var style_title = {
+  
+  fontSize: '17px',
+  padding: '2px',
+  color: 'white',
+  backgroundColor: colors.transparent,
+};
+// create mappanel
+var mapPanel=ui.Map();
+
+var mainPanel=ui.Panel({
+  layout:ui.Panel.Layout.flow('vertical',true),
+  style:{
+  stretch:'horizontal',
+  height:'60%',
+  width:'300px',
+  backgroundColor:'#6c5a34',
+  position:'top-left'
+  }
+});
+
+// splitting the panels
+var splitPanel=ui.SplitPanel({
+  firstPanel:mainPanel,
+  secondPanel:mapPanel,
+  orientation:'horizontal',
+  style:{stretch: 'both'}
+});
+var BORDER_STYLE = '4px solid rgba(97, 97, 97, 0.05)';
+
+var header1 = ui.Label('Results');
+  header1.style().set({
+  'color':'white',
+  'position':  'top-center',
+  'fontSize': '20px',
+  'backgroundColor': colors.transparent,
+  });
+var toolPanel2 = ui.Panel([header1], 'flow', {width: '1000px', height: '100%', border:BORDER_STYLE,  backgroundColor:'#e68040'
+ });
+  
+var mainPanels = ui.Panel([toolPanel2], ui.Panel.Layout.flow('horizontal'), { width: '300px', height: '100%' });
+
+// setting splitpanel in the root
+ui.root.widgets().reset([splitPanel]);
+ui.root.widgets().add(mainPanels);
+
+var title = ui.Label('Land Valuer');
+title.style().set({
+  'color':'orange',
+  'position':  'top-center',
+  'fontSize': '24px',
+  'backgroundColor': colors.transparent,
+  });
+var description = ui.Label('This App is a global land valuation tool',style_title)
+
+mainPanel.add(title)
+mainPanel.add(description)
+
+// Function to prompt the user for coordinates and create a polygon
+function getCoordinatesFromUser() {
+  var input = prompt("Enter coordinates as lat1,lng1;lat2,lng2;lat3,lng3;lat4,lng4 (e.g., '34.479528,11.810775;34.478714,11.890800;34.543827,11.880453;34.522319,11.804350'):");
+  var coordPairs = input.split(';');
+  var coords = coordPairs.map(function(pair) {
+    var latLng = pair.split(',');
+    return [parseFloat(latLng[1]), parseFloat(latLng[0])]; // [lng, lat] for Earth Engine
+  });
+  return coords;
+}
+
+// Get user-defined coordinates
+var coords = getCoordinatesFromUser();
+
+// Create a polygon using the coordinates
+var polygon = ee.Geometry.Polygon(coords);
+
+// Function to calculate the area of the polygon
+function calculateArea(geometry) {
+  var area = geometry.area(); // Calculate area in square meters
+  return area.divide(10000); // Convert to hectares
+}
+
+// Calculate the area of the polygon
+var areaInHectares = calculateArea(polygon);
+var area =  ui.Label("Land Area: " + ee.Number(areaInHectares).getInfo(), style_title);
+ toolPanel2.widgets().set(10,area);
+// Print the area to the console
+print('Area of the polygon (hectares):', areaInHectares);
+
+// Add the polygon to the map
+mapPanel.addLayer(polygon, {color: 'FF0000'}, 'Polygon');
+
+// Center the map view on the polygon
+mapPanel.centerObject(polygon, 13);
+
+// Function to calculate NDVI
+function calculateNDVI(geometry) {
+  // Load updated Landsat 8 imagery (Collection 2, Level 2)
+  var image = ee.ImageCollection('LANDSAT/LC08/C02/T1_L2')
+                .filterBounds(geometry)
+                .filterDate('2023-01-01', '2023-12-31')
+                .median(); // Median to reduce cloud cover effects
+
+  // Convert the DN (Digital Numbers) to surface reflectance for the bands
+  var srImage = image
+                .select(['SR_B5', 'SR_B4']) // Select surface reflectance NIR (B5) and Red (B4) bands
+                .multiply(0.0000275).add(-0.2); // Apply scale and offset for Landsat Collection 2, Level 2 data
+
+  // Calculate NDVI using the scaled surface reflectance values
+  var ndvi = srImage.normalizedDifference(['SR_B5', 'SR_B4']).rename('NDVI');
+  
+  // Clip the image to the polygon
+  var ndviClipped = ndvi.clip(geometry);
+  
+  // Calculate mean NDVI for the area
+  var meanNDVI = ndviClipped.reduceRegion({
+    reducer: ee.Reducer.mean(),
+    geometry: geometry,
+    scale: 30, // 30 meters is the resolution for Landsat 8
+    maxPixels: 1e9
+  }).get('NDVI');
+  
+  return meanNDVI;
+}
+
+// Calculate NDVI for the polygon
+var meanNDVI = calculateNDVI(polygon);
+
+// Print the mean NDVI to the console
+meanNDVI.evaluate(function(result) {
+var meanNDVI =  ui.Label("Mean NDVI: " + ee.Number(result).getInfo(), style_title);
+ toolPanel2.widgets().set(10,meanNDVI);
+
+});
+
+// Add NDVI layer to the map
+// mapPanel.addLayer(calculateNDVI(polygon), {min: -1, max: 1, palette: ['blue', 'white', 'green']}, 'NDVI');
